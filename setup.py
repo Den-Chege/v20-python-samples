@@ -7,37 +7,100 @@ setup(
     package_dir={'': 'src'},
     entry_points={
         'console_scripts': [
-            'v20-configure = configure:main',
-            'v20-market-order-full-example = market_order_full_example:main',
-            'v20-account-details = account.details:main',
-            'v20-account-summary = account.summary:main',
-            'v20-account-instruments = account.instruments:main',
-            'v20-account-changes = account.changes:main',
-            'v20-account-configure = account.configure:main',
-            'v20-instrument-candles = instrument.candles:main',
-            'v20-instrument-candles-poll = instrument.candles_poll:main',
-            'v20-order-get = order.get:main',
-            'v20-order-list-pending = order.list_pending:main',
-            'v20-order-cancel = order.cancel:main',
-            'v20-order-set-client-extensions = order.set_client_extensions:main',
-            'v20-order-market = order.market:main',
-            'v20-order-entry = order.entry:main',
-            'v20-order-limit = order.limit:main',
-            'v20-order-stop = order.stop:main',
-            'v20-order-take-profit = order.take_profit:main',
-            'v20-order-stop-loss = order.stop_loss:main',
-            'v20-order-trailing-stop-loss = order.trailing_stop_loss:main',
-            'v20-pricing-get = pricing.get:main',
-            'v20-pricing-stream = pricing.stream:main',
-            'v20-transaction-stream = transaction.stream:main',
-            'v20-transaction-poll = transaction.poll:main',
-            'v20-transaction-get = transaction.get:main',
-            'v20-transaction-range = transaction.range:main',
-            'v20-trade-get = trade.get:main',
-            'v20-trade-close = trade.close:main',
-            'v20-trade-set-client-extensions = trade.set_client_extensions:main',
-            'v20-position-close = position.close:main',
-        ]
+            'import requests
+import pandas as pd
+import time
+
+# Broker API information
+API_URL = "https://api-fxpractice.oanda.com/v3"
+TOKEN = "596e44118c40416fcf9f9a736cdb58d8-56a708e2bf4ecae7c783e125843f221a"
+ACCOUNT_ID = "YOUR_ACCOUNT_ID"  # Replace with your actual account ID
+INSTRUMENT = "EUR_USD"  # Currency pair
+UNITS = 1000  # Amount to buy/sell
+STOP_LOSS_PIPS = 20  # Stop loss distance in pips
+TAKE_PROFIT_PIPS = 50  # Take profit distance in pips
+PIP_VALUE = 0.0001  # Pip value for most pairs like EUR/USD
+
+# Headers for authorization with Bearer token
+headers = {
+    "Authorization": f"Bearer {TOKEN}"
+}
+
+def get_price_data(instrument, granularity="M5", count=100):
+    """Fetch historical price data for given instrument and granularity."""
+    endpoint = f"/instruments/{instrument}/candles"
+    params = {
+        "granularity": granularity,
+        "count": count,
+        "price": "M"
     }
-)
+    response = requests.get(API_URL + endpoint, headers=headers, params=params)
+    data = response.json()
+    return pd.DataFrame([{
+        'time': candle['time'],
+        'close': float(candle['mid']['c'])
+    } for candle in data['candles']])
+
+def calculate_sma(data, period):
+    """Calculate Simple Moving Average (SMA) for the specified period."""
+    return data['close'].rolling(window=period).mean()
+
+def place_order(units, entry_price):
+    """Place a market order with specified units, stop-loss, and take-profit."""
+    stop_loss_price = entry_price - STOP_LOSS_PIPS * PIP_VALUE if units > 0 else entry_price + STOP_LOSS_PIPS * PIP_VALUE
+    take_profit_price = entry_price + TAKE_PROFIT_PIPS * PIP_VALUE if units > 0 else entry_price - TAKE_PROFIT_PIPS * PIP_VALUE
+    
+    order_data = {
+        "order": {
+            "units": str(units),
+            "instrument": INSTRUMENT,
+            "timeInForce": "FOK",
+            "type": "MARKET",
+            "positionFill": "DEFAULT",
+            "stopLossOnFill": {
+                "price": str(round(stop_loss_price, 5))
+            },
+            "takeProfitOnFill": {
+                "price": str(round(take_profit_price, 5))
+            }
+        }
+    }
+
+    endpoint = f"/accounts/{ACCOUNT_ID}/orders"
+    response = requests.post(API_URL + endpoint, headers=headers, json=order_data)
+    print("Order placed:", response.json())
+
+def trading_bot():
+    """Main function to run the trading bot."""
+    print("Starting trading bot...")
+    
+    while True:
+        # Fetch the latest data
+        data = get_price_data(INSTRUMENT)
+        
+        # Calculate SMAs
+        data['SMA_50'] = calculate_sma(data, 50)
+        data['SMA_200'] = calculate_sma(data, 200)
+        
+        # Get the last row (most recent data)
+        latest_data = data.iloc[-1]
+        
+        # Trading logic: SMA Crossover
+        if latest_data['SMA_50'] > latest_data['SMA_200']:
+            print("Buy signal detected.")
+            entry_price = latest_data['close']
+            place_order(UNITS, entry_price)  # Buy order with stop-loss and take-profit
+        elif latest_data['SMA_50'] < latest_data['SMA_200']:
+            print("Sell signal detected.")
+            entry_price = latest_data['close']
+            place_order(-UNITS, entry_price)  # Sell order with stop-loss and take-profit
+        else:
+            print("No clear signal.")
+        
+        # Wait before the next check
+        time.sleep(300)  # Wait for 5 minutes
+
+# Run the trading bot
+if __name__ == "__main__":
+    trading_bot()
 
